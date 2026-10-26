@@ -28,6 +28,7 @@ def main():
     except (OSError, ValueError, KeyError):
         pass
 
+    before = (c.total, c.counts())
     if c.total is None or time.time() - c.last_full > FULL_RESCAN_SECONDS:
         c.full_scan()
     else:
@@ -38,10 +39,11 @@ def main():
     STATE.write_text(json.dumps({"total": c.total, "lastFull": c.last_full, "comments": c.comments},
                                 ensure_ascii=False), encoding="utf-8")
     snap = c.snapshot()
-    snap.update(mode="github", pollSeconds=300)
+    snap.update(mode="github", pollSeconds=120)
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
-    print(f"total={c.total} counts={c.counts()}")
+    # 워크플로가 이 줄을 보고 숫자가 바뀌었을 때만 바로 올립니다.
+    print(f"total={c.total} counts={c.counts()} changed={int(before != (c.total, c.counts()))}")
 
 
 if __name__ == "__main__":

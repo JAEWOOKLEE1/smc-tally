@@ -216,7 +216,7 @@ function render() {
     $("statusText").textContent = "처음 집계 중…";
   } else {
     $("dot").className = "dot live";
-    $("statusText").textContent = (s.mode === "github" ? "자동 갱신 · 약 5~15분마다 확인" : `실시간 · ${s.pollSeconds}초마다 확인`)
+    $("statusText").textContent = (s.mode === "github" ? "자동 갱신 · 2분마다 확인 (변화가 없으면 기록은 10분마다)" : `실시간 · ${s.pollSeconds}초마다 확인`)
       + (t ? ` · 마지막 확인 ${t}` : "") + (s.status === "scanning" ? ` · 전체 재검증 중 ${s.progress[0]}/${s.progress[1]}` : "");
   }
 

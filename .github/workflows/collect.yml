@@ -1,14 +1,15 @@
 name: collect
 
+# GitHub 예약 실행은 자주 건너뛰어서, 한 번 시작하면 약 5시간 40분 동안 2분마다 집계하고
+# 끝날 때 다음 실행을 스스로 시작합니다. 매시 정각 예약은 사슬이 끊겼을 때 다시 살리는 용도예요.
 on:
   schedule:
-    - cron: "*/5 * * * *"   # GitHub 사정에 따라 실제로는 5~15분 간격으로 실행돼요
+    - cron: "7 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
+  actions: write
 
 concurrency:
   group: collect
@@ -17,10 +18,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -28,20 +26,34 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Count opinions
-        run: python collect.py
-
-      - name: Save state
+      - name: Collect every 2 minutes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          end=$(( $(date +%s) + 340*60 ))
+          last_data=0; last_state=$(date +%s)
+          while [ "$(date +%s)" -lt "$end" ]; do
+            out=$(python collect.py 2>&1) || true
+            echo "$(date -u +%H:%M) $out" | tail -n 1
+            now=$(date +%s)
+            # 숫자가 바뀌면 바로, 아니면 10분에 한 번만 올립니다(저장소가 커지지 않게).
+            if echo "$out" | grep -q "changed=1" || [ $((now - last_data)) -ge 600 ]; then
+              git add docs/data.json
+              # 전체 의견 목록(state)은 30분에 한 번만 저장합니다.
+              if [ $((now - last_state)) -ge 1800 ]; then git add state; last_state=$now; fi
+              if ! git diff --cached --quiet; then
+                git commit -q -m "update tally"
+                git pull -q --rebase --autostash && git push -q || echo "push failed"
+              fi
+              last_data=$now
+            fi
+            sleep 120
+          done
           git add docs/data.json state
-          git commit -q -m "update tally" || exit 0
-          git pull -q --rebase && git push -q
+          git diff --cached --quiet || { git commit -q -m "update tally"; git pull -q --rebase --autostash && git push -q; }
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - name: Start next run
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml -R "${{ github.repository }}"
