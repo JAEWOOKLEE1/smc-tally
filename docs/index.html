@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>찬반 실시간 집계</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --pro: #2a78d6;
+  --con: #eb6834;
+  --other: #b5b3ab;
+  --live: #0ca30c;
+  --warn: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --pro: #3987e5;
+    --con: #d95926;
+    --other: #5f5e5a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 20px; }
+h1 { font-size: 22px; margin: 0; font-weight: 650; }
+header a { color: var(--ink-2); font-size: 13px; }
+.status { margin-left: auto; font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.live { background: var(--live); animation: pulse 2s infinite; }
+.dot.err { background: var(--warn); }
+@keyframes pulse { 50% { opacity: .35; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+.card .sub { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.tile .label { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.tile .value { font-size: 34px; font-weight: 650; line-height: 1.2; margin-top: 4px; }
+.tile .pct { font-size: 14px; color: var(--ink-2); }
+.tile .delta { font-size: 12px; color: var(--muted); height: 18px; }
+.split { display: flex; gap: 2px; height: 14px; margin-top: 18px; }
+.split div { border-radius: 4px; transition: flex-grow .6s; min-width: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12); white-space: nowrap; display: none; z-index: 5;
+}
+.tip b { font-weight: 600; }
+.tip .r { display: flex; align-items: center; gap: 6px; }
+.empty { color: var(--muted); font-size: 13px; padding: 40px 0; text-align: center; }
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tabs button {
+  font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--ink-2);
+}
+.tabs button.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+ul.list { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+ul.list li { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; padding: 8px 0; border-top: 1px solid var(--grid); font-size: 14px; }
+ul.list li:first-child { border-top: 0; }
+.tag { font-size: 11px; font-weight: 600; border-radius: 6px; padding: 2px 0; text-align: center; height: fit-content; color: #fff; }
+.tag.pro { background: var(--pro); } .tag.con { background: var(--con); } .tag.other { background: var(--other); color: var(--ink); }
+.ttl { overflow: hidden; }
+.ttl .snip { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.date { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.progress { height: 6px; background: var(--grid); border-radius: 4px; overflow: hidden; margin-top: 10px; }
+.progress div { height: 100%; background: var(--pro); transition: width .4s; }
+details { margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+table { border-collapse: collapse; width: 100%; margin-top: 8px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+.note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin: -8px 0 16px; }
+.share code { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; overflow-wrap: anywhere; }
+.share button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--ink-2); cursor: pointer; }
+@media (max-width: 760px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .grid2 { grid-template-columns: 1fr; }
+  .tile .value { font-size: 28px; }
+  .status { margin-left: 0; width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>의견 찬반 실시간 집계</h1>
+    <a id="src" href="#" target="_blank" rel="noopener">원문 게시글 열기 ↗</a>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">연결 중…</span></div>
+  </header>
+  <div class="share" id="share" hidden>
+    공유 주소 <code id="shareUrl"></code>
+    <button id="copyBtn" type="button">복사</button>
+  </div>
+
+  <section class="card" id="loading" hidden>
+    <h2>처음 전체 의견을 세는 중이에요</h2>
+    <p class="sub" id="loadingText">사이트에 부담을 주지 않도록 천천히 읽고 있어요.</p>
+    <div class="progress"><div id="bar" style="width:0%"></div></div>
+  </section>
+
+  <section class="card">
+    <div class="tiles">
+      <div class="tile"><div class="label"><span class="sw" style="background:var(--pro)"></span>찬성</div>
+        <div class="value" id="vPro">–</div><div class="pct" id="pPro">&nbsp;</div><div class="delta" id="dPro"></div></div>
+      <div class="tile"><div class="label"><span class="sw" style="background:var(--con)"></span>반대</div>
+        <div class="value" id="vCon">–</div><div class="pct" id="pCon">&nbsp;</div><div class="delta" id="dCon"></div></div>
+      <div class="tile" id="otherTile" style="cursor:pointer" title="기타 의견 제목 모아보기"><div class="label"><span class="sw" style="background:var(--other)"></span>기타·판단 불가 <u style="font-size:12px">목록 보기</u></div>
+        <div class="value" id="vOther">–</div><div class="pct" id="pOther">&nbsp;</div><div class="delta" id="dOther"></div></div>
+      <div class="tile"><div class="label">전체 의견</div>
+        <div class="value" id="vTotal">–</div><div class="pct" id="pRate">&nbsp;</div><div class="delta" id="dTotal"></div></div>
+    </div>
+    <div class="split" id="split" aria-hidden="true" hidden>
+      <div style="background:var(--pro);flex-grow:1"></div>
+      <div style="background:var(--con);flex-grow:1"></div>
+      <div style="background:var(--other);flex-grow:1"></div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>시간에 따른 누적 의견 수</h2>
+      <p class="sub">이 프로그램이 확인할 때마다 기록돼요</p>
+      <div class="legend"><span><i class="sw" style="background:var(--pro)"></i>찬성</span><span><i class="sw" style="background:var(--con)"></i>반대</span></div>
+      <div class="chart" id="lineChart"></div>
+    </section>
+    <section class="card">
+      <h2>날짜별 새 의견</h2>
+      <p class="sub">의견 등록일 기준</p>
+      <div class="legend"><span><i class="sw" style="background:var(--pro)"></i>찬성</span><span><i class="sw" style="background:var(--con)"></i>반대</span><span><i class="sw" style="background:var(--other)"></i>기타</span></div>
+      <div class="chart" id="dayChart"></div>
+      <details><summary>표로 보기</summary><div id="dayTable"></div></details>
+    </section>
+  </div>
+
+  <section class="card" id="listCard">
+    <div class="tabs">
+      <button class="on" data-tab="recent">최근 의견</button>
+      <button data-tab="others">기타로 분류된 의견 <span id="otherCount"></span></button>
+    </div>
+    <p class="sub" id="listSub"></p>
+    <ul class="list" id="list"></ul>
+    <p class="note">"(반대)", "[찬성]"처럼 괄호로 입장을 밝힌 경우를 가장 먼저 봅니다. 그다음 제목에 "찬성·동의·지지·환영"이 있으면 찬성, "반대·철회·폐기·동의할 수 없음"이 있으면 반대로 셉니다. 둘 다 있으면 "…합니다", "적극 …"처럼 단정한 쪽을 따릅니다. 제목으로 판단이 안 되면 본문 앞부분을 보고, 그래도 안 되면 기타로 둡니다.</p>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? "–" : n.toLocaleString("ko-KR");
+const pct = (a, b) => b ? (a / b * 100).toFixed(1) + "%" : "";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const LABEL = { pro: "찬성", con: "반대", other: "기타" };
+let state = null, tab = "recent", prevCounts = null;
+
+async function refresh() {
+  try {
+    // 내 PC 서버와 GitHub Pages 모두 같은 자리의 data.json을 읽습니다.
+    const r = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
+    state = await r.json();
+    render();
+  } catch (e) {
+    $("dot").className = "dot err";
+    $("statusText").textContent = state?.mode === "github"
+      ? "데이터를 불러오지 못했어요. 잠시 뒤 자동으로 다시 시도해요."
+      : "집계 프로그램과 연결이 끊겼어요 (server.py가 실행 중인지 확인)";
+  }
+}
+
+function render() {
+  const s = state, c = s.counts, sum = c.pro + c.con + c.other;
+  $("src").href = s.boardUrl;
+  $("share").hidden = !s.publicUrl;
+  if (s.publicUrl) $("shareUrl").textContent = s.publicUrl;
+
+  // 상태
+  const ready = s.total != null;
+  $("loading").hidden = ready;
+  if (!ready && s.progress[1]) {
+    $("bar").style.width = (s.progress[0] / s.progress[1] * 100) + "%";
+    $("loadingText").textContent = `${s.progress[0]} / ${s.progress[1]} 페이지 읽음 · 사이트에 부담을 주지 않도록 천천히 읽고 있어요.`;
+  }
+  const t = s.lastCheck ? new Date(s.lastCheck * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: s.mode === "github" ? undefined : "2-digit" }) : null;
+  if (s.lastError) {
+    $("dot").className = "dot err";
+    $("statusText").textContent = `확인 실패 – 다음 주기에 다시 시도 (${s.lastError.slice(0, 60)})`;
+  } else if (!ready) {
+    $("dot").className = "dot";
+    $("statusText").textContent = "처음 집계 중…";
+  } else {
+    $("dot").className = "dot live";
+    $("statusText").textContent = (s.mode === "github" ? "자동 갱신 · 약 5~15분마다 확인" : `실시간 · ${s.pollSeconds}초마다 확인`)
+      + (t ? ` · 마지막 확인 ${t}` : "") + (s.status === "scanning" ? ` · 전체 재검증 중 ${s.progress[0]}/${s.progress[1]}` : "");
+  }
+
+  // 숫자
+  $("vPro").textContent = ready ? fmt(c.pro) : "–";
+  $("vCon").textContent = ready ? fmt(c.con) : "–";
+  $("vOther").textContent = ready ? fmt(c.other) : "–";
+  $("vTotal").textContent = fmt(s.total);
+  if (ready) {
+    $("pPro").textContent = pct(c.pro, sum);
+    $("pCon").textContent = pct(c.con, sum);
+    $("pOther").textContent = pct(c.other, sum);
+    $("pRate").textContent = c.pro + c.con ? `찬성:반대 = ${pct(c.pro, c.pro + c.con)} : ${pct(c.con, c.pro + c.con)}` : "";
+    $("split").hidden = false;
+    const [a, b, d] = $("split").children;
+    a.style.flexGrow = c.pro; b.style.flexGrow = c.con; d.style.flexGrow = c.other;
+    // 최근 1시간 증가분
+    const hourAgo = s.serverTime - 3600;
+    const base = [...s.history].reverse().find(h => h.t <= hourAgo) || s.history[0];
+    if (base) {
+      const dd = k => { const v = (k === "total" ? s.total : c[k]) - base[k]; return v > 0 ? `최근 1시간 +${fmt(v)}` : ""; };
+      $("dPro").textContent = dd("pro"); $("dCon").textContent = dd("con");
+      $("dOther").textContent = dd("other"); $("dTotal").textContent = dd("total");
+    }
+    if (prevCounts && (c.pro !== prevCounts.pro || c.con !== prevCounts.con)) flash();
+    prevCounts = c;
+  }
+
+  lineChart(s.history);
+  dayChart(s.byDay);
+  renderList();
+}
+
+function flash() {
+  for (const id of ["vPro", "vCon", "vOther", "vTotal"]) {
+    $(id).animate([{ opacity: .3 }, { opacity: 1 }], { duration: 700 });
+  }
+}
+
+function renderList() {
+  const items = tab === "recent" ? state.recent : state.others;
+  $("otherCount").textContent = state.total != null ? `(${fmt(state.others.length)})` : "";
+  $("listSub").textContent = tab === "recent" ? "가장 최근 30건" : "찬성·반대를 판단하지 못한 의견 전체 · 최신순";
+  $("list").innerHTML = items.length ? items.map(it => `
+    <li><span class="tag ${it.cls}">${LABEL[it.cls]}</span>
+      <div class="ttl"><div>${esc(it.title || "(제목 없음)")}</div><div class="snip">${esc(it.snippet)}</div></div>
+      <span class="date">${esc(it.date)}</span></li>`).join("")
+    : `<li style="display:block" class="empty">${state.total == null ? "집계가 끝나면 보여드릴게요" : "해당하는 의견이 없어요"}</li>`;
+}
+function setTab(name) {
+  tab = name;
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === name));
+  $("list").scrollTop = 0;
+  if (state) renderList();
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$("otherTile").onclick = () => { setTab("others"); $("listCard").scrollIntoView({ behavior: "smooth" }); };
+
+// ---------- 차트 공통 ----------
+function niceMax(v) {
+  if (v <= 0) return 10;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+}
+function tipAt(el, html, x, y) {
+  let tip = el.querySelector(".tip");
+  if (!tip) { tip = document.createElement("div"); tip.className = "tip"; el.appendChild(tip); }
+  if (html == null) { tip.style.display = "none"; return; }
+  tip.innerHTML = html; tip.style.display = "block";
+  const w = tip.offsetWidth, W = el.clientWidth;
+  tip.style.left = Math.min(Math.max(0, x + 12), W - w) + "px";
+  tip.style.top = Math.max(0, y - 10) + "px";
+}
+const row = (color, label, v) => `<div class="r"><i class="sw" style="background:${color}"></i>${label} <b>${fmt(v)}</b></div>`;
+const tickLabel = v => v >= 1000 ? (v / 1000).toLocaleString("ko-KR") + "천" : v;
+
+function axes(W, H, m, max) {
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = max / 4 * i, y = H - m.b - (H - m.t - m.b) * i / 4;
+    g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}" stroke="var(--${i ? "grid" : "axis"})"/>`;
+    g += `<text x="${m.l - 6}" y="${y + 4}" text-anchor="end">${tickLabel(Math.round(v))}</text>`;
+  }
+  return g;
+}
+
+// ---------- 누적 선 차트 ----------
+function lineChart(hist) {
+  const el = $("lineChart");
+  if (!hist || hist.length < 2) {
+    el.innerHTML = `<div class="empty">기록이 두 번 이상 쌓이면 선이 그려져요.<br>새 의견이 들어올 때마다 점이 추가돼요.</div>`;
+    return;
+  }
+  const W = el.clientWidth || 500, H = 240, m = { l: 44, r: 12, t: 10, b: 26 };
+  const t0 = hist[0].t, t1 = hist[hist.length - 1].t || t0 + 1;
+  const max = niceMax(Math.max(...hist.map(h => Math.max(h.pro, h.con))));
+  const X = t => m.l + (W - m.l - m.r) * (t - t0) / Math.max(1, t1 - t0);
+  const Y = v => H - m.b - (H - m.t - m.b) * v / max;
+  const path = k => hist.map((h, i) => (i ? "L" : "M") + X(h.t).toFixed(1) + "," + Y(h[k]).toFixed(1)).join("");
+  const span = t1 - t0;
+  const tf = t => { const d = new Date(t * 1000); return span > 86400 * 2 ? `${d.getMonth() + 1}/${d.getDate()}` : d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); };
+  let xt = "";
+  for (let i = 0; i <= 3; i++) { const t = t0 + span * i / 3; xt += `<text x="${X(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === 3 ? "end" : "middle"}">${tf(t)}</text>`; }
+  const last = hist[hist.length - 1];
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">
+    ${axes(W, H, m, max)}${xt}
+    <path d="${path("pro")}" fill="none" stroke="var(--pro)" stroke-width="2" stroke-linejoin="round"/>
+    <path d="${path("con")}" fill="none" stroke="var(--con)" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${X(last.t)}" cy="${Y(last.pro)}" r="4" fill="var(--pro)" stroke="var(--surface)" stroke-width="2"/>
+    <circle cx="${X(last.t)}" cy="${Y(last.con)}" r="4" fill="var(--con)" stroke="var(--surface)" stroke-width="2"/>
+    <g id="cross" style="display:none"><line y1="${m.t}" y2="${H - m.b}" stroke="var(--axis)"/>
+      <circle r="4" fill="var(--pro)" stroke="var(--surface)" stroke-width="2"/><circle r="4" fill="var(--con)" stroke="var(--surface)" stroke-width="2"/></g>
+    <rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent"/>
+  </svg>`;
+  const svg = el.querySelector("svg"), cross = svg.querySelector("#cross");
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width;
+    let best = hist[0];
+    for (const h of hist) if (Math.abs(X(h.t) - x) < Math.abs(X(best.t) - x)) best = h;
+    const [ln, c1, c2] = cross.children;
+    cross.style.display = "";
+    ln.setAttribute("x1", X(best.t)); ln.setAttribute("x2", X(best.t));
+    c1.setAttribute("cx", X(best.t)); c1.setAttribute("cy", Y(best.pro));
+    c2.setAttribute("cx", X(best.t)); c2.setAttribute("cy", Y(best.con));
+    const when = new Date(best.t * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    tipAt(el, `<b>${when}</b>${row("var(--pro)", "찬성", best.pro)}${row("var(--con)", "반대", best.con)}${row("var(--other)", "기타", best.other)}`, X(best.t) * r.width / W, 10);
+  };
+  svg.onmouseleave = () => { cross.style.display = "none"; tipAt(el, null); };
+}
+
+// ---------- 날짜별 막대 ----------
+function dayChart(days) {
+  const el = $("dayChart");
+  if (!days || !days.length) { el.innerHTML = `<div class="empty">집계가 끝나면 보여드릴게요</div>`; $("dayTable").innerHTML = ""; return; }
+  const shown = days.slice(-14);
+  const W = el.clientWidth || 500, H = 240, m = { l: 44, r: 8, t: 10, b: 26 };
+  const max = niceMax(Math.max(...shown.map(d => Math.max(d.pro, d.con, d.other))));
+  const gw = (W - m.l - m.r) / shown.length, bw = Math.min(18, (gw - 10) / 3);
+  const Y = v => H - m.b - (H - m.t - m.b) * v / max;
+  const bar = (x, v, color) => {
+    const y = Y(v), h = H - m.b - y, r = Math.min(4, h, bw / 2);
+    if (h <= 0) return "";
+    return `<path d="M${x},${H - m.b}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${H - m.b}Z" fill="${color}"/>`;
+  };
+  let g = axes(W, H, m, max);
+  shown.forEach((d, i) => {
+    const cx = m.l + gw * i + gw / 2, x0 = cx - (bw * 3 + 4) / 2;
+    g += bar(x0, d.pro, "var(--pro)") + bar(x0 + bw + 2, d.con, "var(--con)") + bar(x0 + 2 * (bw + 2), d.other, "var(--other)");
+    if (shown.length <= 8 || i % Math.ceil(shown.length / 7) === 0)
+      g += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${d.date.slice(5).replace("-", "/")}</text>`;
+    g += `<rect class="hit" data-i="${i}" x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${H - m.t - m.b}" fill="transparent"/>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${g}</svg>`;
+  const svg = el.querySelector("svg");
+  svg.querySelectorAll(".hit").forEach(h => {
+    h.onmousemove = e => {
+      const d = shown[+h.dataset.i], r = svg.getBoundingClientRect();
+      tipAt(el, `<b>${d.date}</b>${row("var(--pro)", "찬성", d.pro)}${row("var(--con)", "반대", d.con)}${row("var(--other)", "기타", d.other)}`, e.clientX - r.left, e.clientY - r.top - 60);
+    };
+    h.onmouseleave = () => tipAt(el, null);
+  });
+  $("dayTable").innerHTML = `<table><tr><th>날짜</th><th>찬성</th><th>반대</th><th>기타</th></tr>${
+    [...days].reverse().map(d => `<tr><td>${d.date}</td><td>${fmt(d.pro)}</td><td>${fmt(d.con)}</td><td>${fmt(d.other)}</td></tr>`).join("")}</table>`;
+}
+
+window.addEventListener("resize", () => state && (lineChart(state.history), dayChart(state.byDay)));
+$("copyBtn").onclick = async () => {
+  try { await navigator.clipboard.writeText($("shareUrl").textContent); $("copyBtn").textContent = "복사됨"; }
+  catch { $("copyBtn").textContent = "직접 복사해 주세요"; }
+  setTimeout(() => $("copyBtn").textContent = "복사", 1500);
+};
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
