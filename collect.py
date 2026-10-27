@@ -10,7 +10,7 @@ from pathlib import Path
 from server import Collector
 
 BOARD_ID, MENU_ID, BOARD_TYPE_ID = "191857", "006003", "128"
-FULL_RESCAN_SECONDS = 3600  # 한 시간에 한 번은 전체를 다시 세서 삭제·밀림을 보정
+FULL_RESCAN_SECONDS = 3 * 3600  # 세 시간에 한 번은 전체를 다시 세서 삭제·밀림을 보정(전체 집계 중에는 화면이 멈춤)
 
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "state" / "comments.json"

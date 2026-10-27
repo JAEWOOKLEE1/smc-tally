@@ -1,6 +1,6 @@
 name: collect
 
-# GitHub 예약 실행은 자주 건너뛰어서, 한 번 시작하면 약 5시간 40분 동안 2분마다 집계하고
+# GitHub 예약 실행은 자주 건너뛰어서, 한 번 시작하면 약 4시간 50분 동안 2분마다 집계하고
 # 끝날 때 다음 실행을 스스로 시작합니다. 매시 정각 예약은 사슬이 끊겼을 때 다시 살리는 용도예요.
 on:
   schedule:
@@ -26,14 +26,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 작업 전체 시간 제한에 걸리면 아래 "Start next run"까지 건너뛰어 사슬이 끊깁니다.
+      # 그래서 이 단계에 먼저 제한을 걸어, 넘쳐도 다음 실행은 꼭 시작되게 합니다.
       - name: Collect every 2 minutes
+        timeout-minutes: 335
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          end=$(( $(date +%s) + 340*60 ))
+          end=$(( $(date +%s) + 290*60 ))
           last_data=0; last_state=$(date +%s)
           while [ "$(date +%s)" -lt "$end" ]; do
-            out=$(python collect.py 2>&1) || true
+            out=$(timeout 40m python collect.py 2>&1) || true
             echo "$(date -u +%H:%M) $out" | tail -n 1
             now=$(date +%s)
             # 숫자가 바뀌면 바로, 아니면 10분에 한 번만 올립니다(저장소가 커지지 않게).
@@ -53,7 +56,7 @@ jobs:
           git diff --cached --quiet || { git commit -q -m "update tally"; git pull -q --rebase --autostash && git push -q; }
 
       - name: Start next run
-        if: success() || failure()
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run collect.yml -R "${{ github.repository }}"

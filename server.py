@@ -19,6 +19,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,12 +31,18 @@ PAGE_SIZE = 10
 POLL_SECONDS = 60          # 최신 페이지 확인 간격
 FULL_RESCAN_SECONDS = 1800  # 전체 재집계 간격(삭제·밀림 보정)
 PAGE_DELAY = 0.4           # 전체 집계 시 페이지 사이 대기(사이트 부담 줄이기)
+SCAN_WORKERS = 4           # 전체 집계 때 동시에 받는 페이지 수(의견이 1만 건을 넘어 한 줄로 받으면 30분 넘게 걸림)
+FETCH_TRIES = 3            # 페이지 하나가 실패해도 전체 집계가 통째로 날아가지 않게 재시도
 
 PRO_WORDS = ("찬성", "지지", "동의", "찬동", "환영", "착성", "찬선", "참성")  # 뒤의 셋은 흔한 오타
 CON_WORDS = ("반대", "철회", "폐기")
 # "동의"가 들어 있어도 부정이면 반대로 봅니다.
 NEG_AGREE = ("부동의", "비동의", "동의하지", "동의 하지", "동의할 수 없", "동의 할 수 없", "동의 못", "동의못")
-NOT_STANCE = ("동의안",)  # 입장이 아니라 명사인 경우
+# 띄어쓰기가 제각각인 "동의할수 없", "동의 할수없", "동의 불가" 같은 경우
+NEG_AGREE_RE = re.compile(r"동의\s*(?:할\s*수\s*(?:가\s*)?없|하기\s*(?:어렵|힘들)|불가)")
+NOT_STANCE = ("동의안", "지지율")  # 입장이 아니라 명사인 경우
+# "반대)) …", "찬성! …", "반대: …"처럼 맨 앞에 입장을 적고 부호로 끊은 경우도 괄호 표시만큼 확실합니다.
+LEAD_RE = re.compile(r"^\W*(찬성|동의|반대|빈대|부동의)\s*(?:[)\]】〉>:!.,~/\-]|$)")
 # "반대에 동의", "찬성 의견에 반대"처럼 다른 입장을 대상으로 말하는 경우
 STRONG_AFTER = re.compile(r"\s*(?:합니다|해요|합니당|함|입니다|드립니다|하오|[.!~]|$)")
 ABOUT_RE = re.compile(r"(반대|찬성)\s*(?:의견|측|하는 \S+)?\s*에\s*(동의|찬성|지지|반대)")
@@ -58,7 +65,7 @@ def clean(s):
 
 
 def classify_text(text):
-    m = MARK_RE.search(text)
+    m = MARK_RE.search(text) or LEAD_RE.match(text)
     if m:
         return MARK_CLS[m.group(1)]
     m = ABOUT_RE.search(text)
@@ -77,6 +84,7 @@ def classify_text(text):
                 strong = bool(STRONG_AFTER.match(src, m.end())) or src[:m.start()].rstrip().endswith("적극")
                 hits.append((strong, m.start(), cls))
 
+    text = NEG_AGREE_RE.sub(lambda m: "부동의" + " " * (len(m.group(0)) - 3), text)
     add(CON_WORDS + NEG_AGREE, "con", text)
     for w in NEG_AGREE:
         text = text.replace(w, " " * len(w))
@@ -113,8 +121,15 @@ class Collector:
         q = dict(self.params, replyPageIndex=page)
         url = BASE_URL + "?" + urllib.parse.urlencode(q)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (smc-tally)"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            html = r.read().decode("utf-8", "replace")
+        for attempt in range(FETCH_TRIES):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    html = r.read().decode("utf-8", "replace")
+                break
+            except OSError:
+                if attempt == FETCH_TRIES - 1:
+                    raise
+                time.sleep(3 * (attempt + 1))
         m = TOTAL_RE.search(html)
         total = int(m.group(1)) if m else 0
         rows = ROW_RE.findall(html)
@@ -138,13 +153,20 @@ class Collector:
         with self.lock:
             self.status = "scanning"
             self.progress = [1, pages]
-        collected = list(first)
-        for p in range(2, pages + 1):
+        done = [1]
+
+        def fetch(p):
             time.sleep(PAGE_DELAY)
-            _, items = self.fetch_page(p)
-            collected.extend(items)
+            items = self.fetch_page(p)[1]
             with self.lock:
-                self.progress = [p, pages]
+                done[0] += 1
+                self.progress = [done[0], pages]
+            return items
+
+        collected = list(first)
+        with ThreadPoolExecutor(SCAN_WORKERS) as pool:
+            for items in pool.map(fetch, range(2, pages + 1)):  # 페이지 순서는 그대로 유지됩니다
+                collected.extend(items)
         with self.lock:
             self.comments = collected[:total]
             self.total = total
@@ -156,7 +178,8 @@ class Collector:
         total, first = self.fetch_page(1)
         with self.lock:
             known = self.total
-        if known is None or total < known or total - known > 300:
+        # 새 의견이 많이 몰려도 새로 생긴 페이지만 받으면 됩니다. 전체 집계는 줄어들었을 때(삭제)만.
+        if known is None or total < known:
             return self.full_scan()
         diff = total - known
         if diff > 0:
